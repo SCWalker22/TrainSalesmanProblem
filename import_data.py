@@ -4,33 +4,33 @@ from requests.auth import HTTPBasicAuth
 import datetime
 from typing import Type
 
-def location_detail_structure(
+# def location_detail_structure(
         
-    ) -> dict[str, Type]:
-    """
+#     ) -> dict[str, Type]:
+#     """
     
-    """
-    location_detail: dict[str, Type] = {
-        "realtimeActivated": bool, # Activated - always true?
-        "tiploc": str, # Longer station code (tiploc)
-        "crs": str, # 3 Letter station code
-        "description": str, # Full station name
-        "gbttBookedArrival": int | str, # Planned arrival (marked as string, but can be an int (might remove leading 0))
-        "gbttBookedDeparture": int | str, # Planned departure (marked as string, but can be an int (might remove leading 0s))
-        "origin": list[dict[str, str]], # List of details about origin station: Tiploc, description, workingTime (Time accurate to 1/4 of a minute (hhmmss)), publicTime (hhmm)
-        "destination": list[dict[str, str]], # Ditto
-        "isCall": bool, # Is calling at this station
-        "isPublicCall": bool, # Can passengers (board/alight)?
-        "realtimeArrival": int | str | pl.Null, # Expected arrival
-        "realtimeArrivalActual": bool | pl.Null, # Has arrived
-        "realtimeDeparture": int | str, # Expected Departure
-        "realtimeDepartureActual": bool | pl.Null, # Has departed
-        "realtimeDepartureNextDay": bool | pl.Null, # Departs in next day
-        "platform": int | str | pl.Null, # Platform number (stored as str)
-        "platformChanged": bool | pl.Null, # Change to platform?
-        "displayAs": str # Call/Origin/Destination
-    }
-    return location_detail
+#     """
+#     location_detail: dict[str, Type] = {
+#         "realtimeActivated": bool, # Activated - always true?
+#         "tiploc": str, # Longer station code (tiploc)
+#         "crs": str, # 3 Letter station code
+#         "description": str, # Full station name
+#         "gbttBookedArrival": int | str, # Planned arrival (marked as string, but can be an int (might remove leading 0))
+#         "gbttBookedDeparture": int | str, # Planned departure (marked as string, but can be an int (might remove leading 0s))
+#         "origin": list[dict[str, str]], # List of details about origin station: Tiploc, description, workingTime (Time accurate to 1/4 of a minute (hhmmss)), publicTime (hhmm)
+#         "destination": list[dict[str, str]], # Ditto
+#         "isCall": bool, # Is calling at this station
+#         "isPublicCall": bool, # Can passengers (board/alight)?
+#         "realtimeArrival": int | str | pl.Null, # Expected arrival
+#         "realtimeArrivalActual": bool | pl.Null, # Has arrived
+#         "realtimeDeparture": int | str, # Expected Departure
+#         "realtimeDepartureActual": bool | pl.Null, # Has departed
+#         "realtimeDepartureNextDay": bool | pl.Null, # Departs in next day
+#         "platform": int | str | pl.Null, # Platform number (stored as str)
+#         "platformChanged": bool | pl.Null, # Change to platform?
+#         "displayAs": str # Call/Origin/Destination
+#     }
+#     return location_detail
 
 def format_df(
         df: pl.DataFrame,
@@ -39,20 +39,28 @@ def format_df(
     """
     
     """
-    location_detail = location_detail_structure()
-    new_columns = []
-    for i, key in enumerate(location_detail.keys()):
-        if key not in ["origin", "destination"]:
-            new_columns.append(pl.col("locationDetail")[i].alias(key)) # Cast to correct type?
-        else:
-            special_columns = [pl.col("locationDetail")[i][col_name] for col_name in pl.col("locationDetail")[i].items()]
-            new_columns += special_columns
+    # location_detail = location_detail_structure()
+    # new_columns = []
+    # for i, key in enumerate(location_detail.keys()):
+    #     if key not in ["origin", "destination"]:
+    #         print(f"{df["locationDetail"][0]=}, \n\n\n {df["locationDetail"][0].keys()=}\n\n\n\n\n")
+    #         new_columns.append(pl.col("locationDetail").alias(key)) # Cast to correct type?
+    #     else:
+    #         special_columns = [pl.col("locationDetail")[col_name] for col_name in pl.col("locationDetail").items()]
+    #         new_columns += special_columns
 
-    # new_columns = [pl.col("Location")[i].alias(key) if key not in ["origin", "destination"] else  for i, key, val in enumerate(location_detail.items())]
-    df = df.with_columns(
-        new_columns
-    )
-    print(df)
+    # # new_columns = [pl.col("Location")[i].alias(key) if key not in ["origin", "destination"] else  for i, key, val in enumerate(location_detail.items())]
+    if "origin" in df.columns:
+        df = df.drop("origin")
+    if "destination" in df.columns:
+        df = df.drop("destination")
+    df = df.unnest("locationDetail")
+    df = df.with_columns([
+        pl.col("origin").list.first().struct.rename_fields([f"origin_{key.name}" for key in df.schema["origin"].inner.fields]).alias("origin"),
+        pl.col("destination").list.first().struct.rename_fields([f"destination_{key.name}" for key in df.schema["destination"].inner.fields]).alias("destination")
+    ])
+    df = df.unnest("origin")
+    df = df.unnest("destination")
     return df
 
 def make_request(
@@ -76,7 +84,7 @@ def load_data(
 
     ) -> pl.DataFrame:
     """
-    
+    Collect data all at once, then collect and store
     """
     stationMap = dict(zip(mappingDF["TLC"], mappingDF["Station"]))
 
@@ -88,9 +96,10 @@ def load_data(
     for key in stationMap.keys():
         print(f"Loading {key}")
         request = f"{base_url}/json/search/{key}{date}"
+        print(request)
         trains = make_request(request, HTTPBasicAuth(username, password))
         if "services" in trains.keys():
-            df =  pl.DataFrame(trains["services"])
+            df = pl.DataFrame(trains["services"])
             df = df.with_columns(pl.lit(key).alias("Station"))
             # print(df)
             # print(df["locationDetail"])
@@ -100,4 +109,88 @@ def load_data(
             print(f"Unable to find services for {key}")
 
     dfs = pl.concat(df_list)
+    dfs.write_csv("Services.csv")
     return dfs
+
+def stream_data(
+    base_url: str,
+    username: str,
+    password: str,
+    mappingDF: pl.DataFrame,
+    date: datetime.datetime | str = "",
+    start_station: str = ""
+
+    ) -> pl.DataFrame:
+    """
+    Allows data to be streamed, and picked up later if an error occurs
+    Can add code to allow auto resuming on error
+    """
+    stationMap = dict(zip(mappingDF["TLC"], mappingDF["Station"]))
+
+    if date != "":
+        date = f'/{date.strftime("%Y/%m/%d")}'
+
+    # time_cols: list[str] = ["gbttBookedArrival, gbttBookedDeparture", "origin_workingTime", "origin_publicTime", "destination_workingTime", "destination_publicTime", "realtimeArrival", "realtimeDeparture"]
+
+    if not start_station:
+        dfs: pl.DataFrame = pl.DataFrame()
+        reached_first = True
+    else:
+        dfs = pl.read_csv("Services.csv", infer_schema_length = None)
+        dfs = dfs.with_columns([
+            pl.col(col).cast(pl.String).alias(col) for col in dfs.columns if dfs[col].dtype == pl.Int64
+        ])
+        reached_first = False
+
+
+    for key in stationMap.keys():
+        if key == start_station:
+            reached_first = True
+        if reached_first:
+            print(f"Loading {key}")
+            request = f"{base_url}/json/search/{key}{date}"
+            trains = make_request(request, auth=HTTPBasicAuth(username, password))
+            if "services" in trains.keys() and trains["services"] is not None:
+                df = pl.DataFrame(trains["services"])
+                df = df.with_columns(pl.lit(key).alias("Station")) # Not needed ??? ======== crs
+                # print(f"{df},\n{df.columns},\n{df.dtypes}")
+                # print(f"{dfs},\n{dfs.columns},\n{dfs.dtypes}")
+                df = format_df(df)
+                # print(f"{df},\n{df.columns},\n{df.dtypes}")
+                if dfs.is_empty():
+                    dfs = df
+                else:
+                    dfs = pl.concat([dfs, df], how="diagonal")
+            if "associations" in dfs.columns:
+                dfs = dfs.drop("associations")
+            # print(f"{dfs},\n{dfs.dtypes},\n{dfs.columns},\n{dfs["associations"]}")
+            dfs.write_csv("Services.csv")
+    return dfs
+
+def rename_cols(
+        df: pl.DataFrame
+    
+    ) -> pl.DataFrame:
+    """
+    
+    """
+    col_names = {
+        "realtimeActivated": "activated",
+        "gbttBookedArrival": "arrival",
+        "gbttBookedArrivalNextDay": "nextDay",
+        "gbttBookedDeparture": "departure",
+        "origin_publicTime": "startDeparture",
+    }
+    df = df.rename(col_names)
+    return df
+
+# def pad_times(
+#         df: pl.DataFrame
+
+#     ) -> pl.DataFrame:
+#     """
+#     Haha pad thai == pad time
+#     """
+#     df = df.with_columns([
+#         pl.col("arrival").str.
+#     ])
