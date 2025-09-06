@@ -1,5 +1,5 @@
 import polars as pl
-from datetime import datetime
+from datetime import datetime, timedelta
 from import_data import rename_cols
 import time
 import numpy as np
@@ -37,6 +37,36 @@ def get_times_connections(
                 rows.append(row)
     connection_times = pl.concat(rows, how="diagonal")
     return connection_times
+
+def get_service_times(
+        services: pl.DataFrame,
+        route: list[str],
+        start_time: datetime,
+        change_time: int = 5
+
+    ) -> list[dict[str, int]]:
+    """
+    """
+    timings: list[dict[str, int]] = []
+    for index, station in enumerate(route[:-1]):
+        next_station = route[index + 1]
+        starting_from_station_after_time = services.filter(pl.col("crs") == station).filter(pl.col("departure").cast(pl.Int64) > int(start_time.strftime("%H%M")))["serviceUid"]
+        services_from_station_after_time = services.filter(pl.col("serviceUid").is_in(starting_from_station_after_time))
+        print(int(start_time.strftime("%H%M")))
+        # services_after_time = services_from_station.filter(pl.col("departure").cast(pl.Int64) > int(start_time.strftime("%H%M")))
+        services_stopping_at_station = services_from_station_after_time.filter(pl.col("crs") == next_station) # Need to select services calling at station then next_station, not the other way around
+        quickest_service = services_stopping_at_station.with_columns(pl.col("arrival").cast(pl.Int64)).sort(by="arrival", nulls_last = True)[0]
+        arrival_time = quickest_service["arrival"].to_list()[0]
+        quickest_uid = quickest_service["serviceUid"].to_list()[0]
+        departure_time = services.filter(pl.col("crs") == station).filter(pl.col("serviceUid") == quickest_uid)["departure"].to_list()[0]
+        hours = int(str(arrival_time)[:2])
+        minutes = int(str(arrival_time)[2:])
+        start_time = datetime(datetime.today().year, datetime.today().month, datetime.today().day,
+                hours, minutes, 0) + timedelta(minutes=change_time)
+        timings.append({"departs": station, "arrives": next_station,
+                "departure_time": departure_time, "arrival_time": arrival_time})
+
+    return timings
 
 def get_full_connection_times(
         connection_time: pl.DataFrame,
@@ -144,7 +174,7 @@ def christofides(
 
 
 if __name__ == "__main__":
-    services = pl.read_csv("Services.csv", infer_schema=None)
+    services = rename_cols(pl.read_csv("Services.csv", infer_schema=None))
     # services = rename_cols(services)
     # print(services)
     # connection_times = get_times_connections(services)
@@ -159,9 +189,11 @@ if __name__ == "__main__":
     # min_span_tree = find_minimum_spanning_tree(dm, ['MYB', 'BDS', 'CST', 'CHX', 'CTK', 'EPH', 'EUS', 'ZFD', 'FST', 'HOX', 'KGX', 'LST', 'LBG', 'MOG', 'OLD', 'PAD', 'SDC', 'STP', 'TCR', 'VXH', 'VIC', 'BFR', 'WAT', 'WAE'])
     # time_span_end = time.time()
     # print(min_span_tree)
-    stations = ['MYB', 'BDS', 'CST', 'CHX', 'CTK', 'EPH', 'EUS', 'ZFD', 'FST', 'HOX', 'KGX', 'LST', 'LBG', 'MOG', 'OLD', 'PAD', 'SDC', 'STP', 'TCR', 'VXH', 'VIC', 'BFR', 'WAT', 'WAE']
+    # stations = ['MYB', 'BDS', 'CST', 'CHX', 'CTK', 'EPH', 'EUS', 'ZFD', 'FST', 'HOX', 'KGX', 'LST', 'LBG', 'MOG', 'OLD', 'PAD', 'SDC', 'STP', 'TCR', 'VXH', 'VIC', 'BFR', 'WAT', 'WAE']
 
-    time_christofides_start = time.time()
-    stations_to_travel = christofides(services, stations)
-    time_christofides_end = time.time()
-    print(f"took {time_christofides_end - time_christofides_start} seconds")
+    # time_christofides_start = time.time()
+    # stations_to_travel = christofides(services, stations)
+    # time_christofides_end = time.time()
+    # print(f"took {time_christofides_end - time_christofides_start} seconds")
+    print(get_service_times(services, ["EXD", "EXC", "EXD", "SJP", "EXD", "TAU", "PLY"], datetime(2025, 9, 2, 12, 0, 0)))
+    # print(services.filter(pl.col("crs") == "EXC"))
