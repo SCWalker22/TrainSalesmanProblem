@@ -52,9 +52,23 @@ def get_service_times(
         next_station = route[index + 1]
         starting_from_station_after_time = services.filter(pl.col("crs") == station).filter(pl.col("departure").cast(pl.Int64) > int(start_time.strftime("%H%M")))["serviceUid"]
         services_from_station_after_time = services.filter(pl.col("serviceUid").is_in(starting_from_station_after_time))
-        print(int(start_time.strftime("%H%M")))
-        # services_after_time = services_from_station.filter(pl.col("departure").cast(pl.Int64) > int(start_time.strftime("%H%M")))
-        services_stopping_at_station = services_from_station_after_time.filter(pl.col("crs") == next_station) # Need to select services calling at station then next_station, not the other way around
+        condensed = services_from_station_after_time.group_by("serviceUid").agg([
+                pl.when(pl.col("crs") == next_station)
+                .then(pl.col("arrival").cast(pl.Int64))
+                .otherwise(None)
+            .alias("arrivalNext"),
+                pl.when(pl.col("crs") == station)
+                .then(pl.col("departure").cast(pl.Int64))
+                .otherwise(None)
+            .alias("departurePrevious"),
+        ])
+        condensed = condensed.with_columns([
+            pl.col("arrivalNext").list.max(),
+            pl.col("departurePrevious").list.max()
+        ])
+        correct_direction_uids = condensed.filter(pl.col("arrivalNext") > pl.col("departurePrevious"))["serviceUid"]
+        services_correct_direction = services_from_station_after_time.filter(pl.col("serviceUid").is_in(correct_direction_uids))
+        services_stopping_at_station = services_correct_direction.filter(pl.col("crs") == next_station)
         quickest_service = services_stopping_at_station.with_columns(pl.col("arrival").cast(pl.Int64)).sort(by="arrival", nulls_last = True)[0]
         arrival_time = quickest_service["arrival"].to_list()[0]
         quickest_uid = quickest_service["serviceUid"].to_list()[0]
