@@ -172,7 +172,7 @@ def rename_cols(
     
     ) -> pl.DataFrame:
     """
-    
+    Maybe add try except column not found error
     """
     col_names = {
         "realtimeActivated": "activated",
