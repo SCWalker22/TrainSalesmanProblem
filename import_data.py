@@ -184,6 +184,19 @@ def rename_cols(
     df = df.rename(col_names)
     return df
 
+def convert_cols_to_numeric(
+        df: pl.DataFrame,
+        cols: list[str] = [
+            "arrival",
+            "departure"
+        ]
+    ) -> pl.DataFrame:
+    """
+    
+    """
+    df = df.with_columns([pl.col(col).cast(pl.Int64) for col in cols])
+    return df
+
 # def pad_times(
 #         df: pl.DataFrame
 

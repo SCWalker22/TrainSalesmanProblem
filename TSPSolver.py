@@ -1,6 +1,6 @@
 import polars as pl
 from datetime import datetime, timedelta
-from import_data import rename_cols
+from import_data import rename_cols, convert_cols_to_numeric
 import time
 import numpy as np
 from scipy.sparse import csr_array
@@ -171,89 +171,222 @@ def extract_possible_routes(
     output = [route for route in output if route != []]
     return output
 
-def find_path_between_stations(
-    station_start: str,
-    station_end: str,
-    services: pl.DataFrame
+def find_route(
+        arrivals: pl.DataFrame,
+        station_start: str,
+        station_end: str
 
     ) -> list[str]:
     """
-    """
-    full_path = [station_start, station_end]
-    best_connection = []
-    if not is_all_direct_path(services, full_path):
-        print("No full direct route")
-        # while not is_direct_path(station, next_station, services):
-        fastest_connection: int = 0
-        services_from_station = services.filter(pl.col("crs") == station_start)["serviceUid"]
-        possible_next_stations = services.filter(pl.col("serviceUid").is_in(services_from_station))["crs"].unique().to_list()
-        print(f"{station_start} to {station_end} can go via {possible_next_stations}")
-        found_route: bool = False
-        for possible_intermediary in possible_next_stations:
-            full_route = [station_start, possible_intermediary, station_end]
-            if is_all_direct_path(services, full_route):
-                connection_time = get_connection_time(services, full_route)
-                if connection_time < fastest_connection or fastest_connection == 0:
-                    if connection_time != 0:
-                        print(f"Success for {station_start}, {possible_intermediary}, {station_end}: {connection_time} vs {fastest_connection}")
-                        fastest_connection = connection_time
-                        found_route = True
-                        best_connection = full_route
-        possible_multiple_intermediaries: list[dict[str, list[str]]] = {station_start: possible_next_stations}
-        while not found_route:
-            for intermediary in possible_multiple_intermediaries[station_start]:
-                possible_next_stations: list[str] = []
-                services_from_intermediary = services.filter(pl.col("crs") == intermediary)["serviceUid"]
-                possible_next = services.filter(pl.col("serviceUid").is_in(services_from_intermediary))["crs"].unique().to_list()
-                if station_start in possible_next: # Filter out any unwanted - this needs to be remade
-                    possible_next.remove(station_start)
-                for station_list in possible_multiple_intermediaries:
-                    for station in station_list:
-                        if station in possible_next:
-                            possible_next.remove(station)
-                for station in possible_next_stations:
-                    if station in possible_next:
-                        possible_next.remove(station)
-                possible_next_stations += possible_next
-                possible_multiple_intermediaries[intermediary] = possible_next_stations
-            print(possible_multiple_intermediaries)
-            # Now build subroutes from all combinations of routes
-            fastest_connection: int = 0
-            # print(possible_multiple_intermediaries)
-            # for combo in itertools.product(*possible_multiple_intermediaries):
-            #     print(list(combo))
-            possible_routes = extract_possible_routes(possible_multiple_intermediaries, station_start)
-            for route in possible_routes:
-                full_route: list[str] = route + [station_end]
-                if is_all_direct_path(services, full_route):
-                    print(f"Success for {full_route}")
-                    connection_time = get_connection_time(full_route, services)
-                    # If this was in invalid route, we will just fill with 0 again
-                    if connection_time < fastest_connection or fastest_connection == 0:
-                        if connection_time != 0:
-                            fastest_connection = connection_time
-                            best_connection = full_route
-                            found_route = True
-        return best_connection
-    return full_path
-
-def get_full_service_stops(
-        services: pl.DataFrame,
-        stations: list[str]
     
-    ) -> list[str]:
     """
+    route_reverse: list[str] = [station_end]
+    while station_start not in route_reverse:
+        route_reverse.append(arrivals.filter(pl.col("crs") == route_reverse[-1])["serviceFrom"][0])
+    route = route_reverse[::-1] # Reverse route
+    return route
+
+def fill_first_arrival_table(
+        arrivals: pl.DataFrame,
+        services_calling: pl.DataFrame,
+        station: str
+
+    ) -> pl.DataFrame:
     """
-    for index, station in enumerate(stations[:-1]):
-        next_station = stations[index+1]
-        print(f"checking {station} to {next_station}")
-        # Loop through stations, an try to find next station
-        if is_direct_path(station, next_station, services):
-            print(f"Direct between {station}, {next_station}")
-            continue
-        else:
-            # No direct path, so we need to find a (the quickest ideally) path
-            sub_path = find_path_between_stations(station, next_station, services)
+    
+    """
+    quickest_arrival_per_station = services_calling.group_by("crs").agg(pl.col("arrival").min().alias("firstArrival"))
+    arrivals = (arrivals.join(quickest_arrival_per_station, on="crs", how="left")
+                .with_columns([
+                    pl.when(
+                        (pl.col("arrival").is_null()) | (pl.col("arrival") > pl.col("firstArrival"))
+                )
+                .then(pl.col("firstArrival"))
+                .otherwise(pl.col("arrival"))
+                .alias("arrival"),
+                    pl.when(
+                        (pl.col("arrival").is_null()) | (pl.col("arrival") > pl.col("firstArrival"))
+                    )
+                .then(pl.lit(station))
+                .otherwise(pl.col("serviceFrom"))
+                .alias("serviceFrom")
+            ]
+                ).select(["crs", "arrival", "serviceFrom"])
+    )
+    return arrivals
+
+def find_timed_stations(
+        services: pl.DataFrame,
+        station_start: str,
+        arrivals: pl.DataFrame,
+        start_time: datetime = datetime(2025, 9, 1, 8, 0, 0),
+
+    ) -> pl.DataFrame:
+    """
+    
+    """
+    valid_services_out = services.filter((pl.col("crs") == station_start) & (pl.col("departure") > int(start_time.strftime("%H%M"))))
+    valid_services_out = valid_services_out.with_columns(pl.col("departure").alias("time")).select(["serviceUid", "time"])
+    services_via_start = (services.join(valid_services_out, on="serviceUid")
+                        .filter((pl.col("crs") != station_start) & (pl.col("time") < pl.col("arrival")))
+                        )
+    services_via_start = services_via_start.with_columns(pl.when(pl.col("nextDay") == "true").then(pl.col("arrival").cast(pl.Int64) + 2400).otherwise(pl.col("arrival")).alias("arrival")).sort(by="arrival")
+    # if station_start == "EXD":
+    #     print(services_via_start.filter(pl.col("crs") == "EXM"))
+    #     print(services.filter(pl.col("crs") == "EXM").select(["arrival", "departure", "serviceUid"]))
+    #     print(f"{valid_services_out=}, {services_via_start=}")
+    arrivals = fill_first_arrival_table(arrivals, services_via_start, station_start)
+    return arrivals
+
+def find_first_arrival(
+        services: pl.DataFrame,
+        station_start: str,
+        station_end: str,
+        start_time: datetime = datetime(2025, 9, 1, 8, 0, 0),
+        change_time: int = 5,
+        extra_check_depth: int = 3
+
+    ) -> tuple[datetime, list[str]]:
+    """
+    Might need to prevent double counting - checked stations - but check again if earlier arrival
+    """
+    if is_direct_path(station_start, station_end, services):
+        path: list[str] = [station_start, station_end]
+    else:
+        # Generate path by finding earliest arrival
+        stations = services["crs"].unique()
+        arrivals: pl.DataFrame = pl.DataFrame({"crs": stations, "arrival": None, "serviceFrom": None})
+        arrivals = find_timed_stations(services, station_start, arrivals, start_time)
+        arrival_time: int | None = arrivals.filter(pl.col("crs") == station_end)["arrival"][0]
+        # count = 0
+        extra_checks: list[bool] = [False for _ in range(extra_check_depth)]
+        checked_stations: list[str] = []
+        
+        while arrival_time is None or not all(extra_checks):
+            stations_reachable = arrivals.filter(pl.col("arrival").is_not_null())["crs"].unique().to_list()
+            for station in stations_reachable:
+                arrive_at_start_time = str(arrivals.filter(pl.col("crs") == station)["arrival"][0]).zfill(4) # Enforce 4 digit
+                new_start_time = datetime(2025, 9, 1, int(arrive_at_start_time[:-2]), int(arrive_at_start_time[-2:]), 0) + timedelta(minutes=change_time)
+                arrivals = find_timed_stations(services, station, arrivals, new_start_time)
+                arrival_time: int | None = arrivals.filter(pl.col("crs") == station_end)["arrival"][0]
+
+            if arrival_time is not None:
+                for index, bool_val in enumerate(extra_checks):
+                    if not bool_val:
+                        extra_checks[index] = True
+                        break
+
+            checked_stations += stations_reachable
+        #     count += 1
+        #     print(f"{count=}, {arrivals.filter(pl.col('crs') == station_end)}")
+        # print(f"{arrivals}, {arrival_time}") # Need to then find which route gave this time
+        route = find_route(arrivals, station_start, station_end)
+        arrival_time_str = str(arrival_time).zfill(4) # Enforce 4 digit
+        start_time = datetime(2025, 9, 1, int(arrive_at_start_time[:-2]), int(arrive_at_start_time[-2:]), 0) + timedelta(minutes=change_time)
+    return start_time, route
+
+def get_full_route_timed(
+        services: pl.DataFrame,
+        disconnected_route: list[str],
+        start_time: datetime = datetime(2025, 9, 1, 8, 0, 0),
+        change_time: int = 5
+
+    ) -> tuple[datetime, list[str]]:
+    """
+    
+    """
+    route: list[str] = [disconnected_route[0]]
+    for index in range(len(disconnected_route) - 1):
+        station_start = disconnected_route[index]
+        station_end = disconnected_route[index + 1]
+        start_time, partial_route = find_first_arrival(services, station_start, station_end, start_time, change_time=change_time)
+        route += partial_route[1:]
+    return start_time, route
+
+
+# def find_path_between_stations(
+#     station_start: str,
+#     station_end: str,
+#     services: pl.DataFrame
+
+#     ) -> list[str]:
+#     """
+#     """
+#     full_path = [station_start, station_end]
+#     best_connection = []
+#     if not is_all_direct_path(services, full_path):
+#         print("No full direct route")
+#         # while not is_direct_path(station, next_station, services):
+#         fastest_connection: int = 0
+#         services_from_station = services.filter(pl.col("crs") == station_start)["serviceUid"]
+#         possible_next_stations = services.filter(pl.col("serviceUid").is_in(services_from_station))["crs"].unique().to_list()
+#         print(f"{station_start} to {station_end} can go via {possible_next_stations}")
+#         found_route: bool = False
+#         for possible_intermediary in possible_next_stations:
+#             full_route = [station_start, possible_intermediary, station_end]
+#             if is_all_direct_path(services, full_route):
+#                 connection_time = get_connection_time(services, full_route)
+#                 if connection_time < fastest_connection or fastest_connection == 0:
+#                     if connection_time != 0:
+#                         print(f"Success for {station_start}, {possible_intermediary}, {station_end}: {connection_time} vs {fastest_connection}")
+#                         fastest_connection = connection_time
+#                         found_route = True
+#                         best_connection = full_route
+#         possible_multiple_intermediaries: list[dict[str, list[str]]] = {station_start: possible_next_stations}
+#         while not found_route:
+#             for intermediary in possible_multiple_intermediaries[station_start]:
+#                 possible_next_stations: list[str] = []
+#                 services_from_intermediary = services.filter(pl.col("crs") == intermediary)["serviceUid"]
+#                 possible_next = services.filter(pl.col("serviceUid").is_in(services_from_intermediary))["crs"].unique().to_list()
+#                 if station_start in possible_next: # Filter out any unwanted - this needs to be remade
+#                     possible_next.remove(station_start)
+#                 for station_list in possible_multiple_intermediaries:
+#                     for station in station_list:
+#                         if station in possible_next:
+#                             possible_next.remove(station)
+#                 for station in possible_next_stations:
+#                     if station in possible_next:
+#                         possible_next.remove(station)
+#                 possible_next_stations += possible_next
+#                 possible_multiple_intermediaries[intermediary] = possible_next_stations
+#             print(possible_multiple_intermediaries)
+#             # Now build subroutes from all combinations of routes
+#             fastest_connection: int = 0
+#             # print(possible_multiple_intermediaries)
+#             # for combo in itertools.product(*possible_multiple_intermediaries):
+#             #     print(list(combo))
+#             possible_routes = extract_possible_routes(possible_multiple_intermediaries, station_start)
+#             for route in possible_routes:
+#                 full_route: list[str] = route + [station_end]
+#                 if is_all_direct_path(services, full_route):
+#                     print(f"Success for {full_route}")
+#                     connection_time = get_connection_time(full_route, services)
+#                     # If this was in invalid route, we will just fill with 0 again
+#                     if connection_time < fastest_connection or fastest_connection == 0:
+#                         if connection_time != 0:
+#                             fastest_connection = connection_time
+#                             best_connection = full_route
+#                             found_route = True
+#         return best_connection
+#     return full_path
+
+# def get_full_service_stops(
+#         services: pl.DataFrame,
+#         stations: list[str]
+    
+#     ) -> list[str]:
+#     """
+#     """
+#     for index, station in enumerate(stations[:-1]):
+#         next_station = stations[index+1]
+#         print(f"checking {station} to {next_station}")
+#         # Loop through stations, an try to find next station
+#         if is_direct_path(station, next_station, services):
+#             print(f"Direct between {station}, {next_station}")
+#             continue
+#         else:
+#             # No direct path, so we need to find a (the quickest ideally) path
+#             sub_path = find_path_between_stations(station, next_station, services)
 
 def get_full_connection_times(
         connection_time: pl.DataFrame,
@@ -361,7 +494,7 @@ def christofides(
 
 
 if __name__ == "__main__":
-    services = rename_cols(pl.read_csv("Services.csv", infer_schema=None))
+    services = convert_cols_to_numeric(rename_cols(pl.read_csv("Services.csv", infer_schema=None)))
     # services = rename_cols(services)
     # print(services)
     # connection_times = get_times_connections(services)
@@ -378,10 +511,13 @@ if __name__ == "__main__":
     # print(min_span_tree)
     stations = ['MYB', 'BDS', 'CST', 'CHX', 'CTK', 'EPH', 'EUS', 'ZFD', 'FST', 'HOX', 'KGX', 'LST', 'LBG', 'MOG', 'OLD', 'PAD', 'SDC', 'STP', 'TCR', 'VXH', 'VIC', 'BFR', 'WAT', 'WAE']
     # print(extract_possible_routes({"EXD": ["EXC", "SJP", "PLY"], "EXC": ["SJP", "WAT"], "SJP": ["WAT"]}, "EXD"))
-    get_full_service_stops(services, ["EXD", "IPS", "EXC", "EXD", "SJP", "EXD", "TAU", "PLY"])
+    # get_full_service_stops(services, ["EXD", "IPS", "EXC", "EXD", "SJP", "EXD", "TAU", "PLY"])
+    print(get_full_route_timed(services, ["EXD", "IPS", "EXC", "EXD", "SJP", "EXD", "TAU", "PLY"]))
+    # print(find_first_arrival(services, "PLY", "HON"))
     # time_christofides_start = time.time()
     # stations_to_travel = christofides(services, stations)
     # time_christofides_end = time.time()
     # print(f"took {time_christofides_end - time_christofides_start} seconds")
+    # print(stations_to_travel)
     # print(get_service_times(services, ["EXD", "EXC", "EXD", "SJP", "EXD", "TAU", "PLY"], datetime(2025, 9, 2, 12, 0, 0)))
     # print(services.filter(pl.col("crs") == "EXC"))
