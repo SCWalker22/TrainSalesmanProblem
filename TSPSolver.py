@@ -257,7 +257,6 @@ def find_minimum_spanning_tree(
 def christofides(
     services: pl.DataFrame,
     stations: list[str],
-    start_time: datetime | None = None
 
     ) -> list[str]:
     """
@@ -289,6 +288,55 @@ def christofides(
     # print(matching)
     return odd_vertices
 
+def simple_route_finder(
+        services: pl.DataFrame,
+        stations: list[str],
+        start_time: datetime,
+        change_time: int = 5
+
+    ) -> tuple[list[str], int]:
+    """
+    
+    """
+    end_time, route = get_full_route_timed(services, christofides(services, stations), start_time=start_time, change_time=change_time)
+    mins_taken = (end_time - start_time).total_seconds() / 60
+    return route, mins_taken
+
+def a_star(
+        services: pl.DataFrame,
+        stations: list[str],
+        start_time: datetime,
+        change_time: int = 5
+
+    ) -> tuple[list[str], int]:
+    """
+    
+    """
+    pass
+
+def simple_improved(
+        services: pl.DataFrame,
+        stations: list[str],
+        start_time: datetime,
+        change_time: int = 5
+
+    ) -> tuple[list[str], int]:
+    """
+    
+    """
+    pass
+
+def full_graph_traversal(
+        services: pl.DataFrame,
+        stations: list[str],
+        start_time: datetime,
+        change_time: int = 5
+    
+    ) -> tuple[list[list[str]], list[int]]:
+    """
+
+    """
+    pass
 
 if __name__ == "__main__":
     services = convert_cols_to_numeric(rename_cols(pl.read_csv("Services.csv", infer_schema=None)))
