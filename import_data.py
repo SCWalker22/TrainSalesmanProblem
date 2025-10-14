@@ -3,6 +3,10 @@ import requests
 from requests.auth import HTTPBasicAuth
 import datetime
 from typing import Type
+import numpy as np
+
+USERNAME = ""
+PASSWORD = ""
 
 # def location_detail_structure(
         
@@ -172,6 +176,7 @@ def rename_cols(
     
     ) -> pl.DataFrame:
     """
+    Renames some columns with more simple names
     Maybe add try except column not found error
     """
     col_names = {
@@ -197,13 +202,87 @@ def convert_cols_to_numeric(
     df = df.with_columns([pl.col(col).cast(pl.Int64) for col in cols])
     return df
 
-# def pad_times(
-#         df: pl.DataFrame
+def get_times_connections(
+        services: pl.DataFrame
 
-#     ) -> pl.DataFrame:
-#     """
-#     Haha pad thai == pad time
-#     """
-#     df = df.with_columns([
-#         pl.col("arrival").str.
-#     ])
+    ) -> pl.DataFrame:
+    """
+    Get the shortest time for each connection
+    This method fills a square df with optimal static times between services sparsely (directional)
+    This only has the direct services, we then later fill the table based on this
+    Might need some cleaning up
+    """
+    stations = services["crs"].unique() # Create a series of all stations
+
+    timed_connections = pl.DataFrame(
+                {"startStation": stations},
+    ).with_columns([pl.lit(None).alias(col) for col in stations])
+
+    rows: list[pl.DataFrame] = []
+
+    for start_station in stations: # Loop through all stations, try to find optimal route to all other stations
+        connections: dict[str, int] = {}
+        start_station_service_uids = services.filter(pl.col("crs") == start_station).select("serviceUid").unique()
+        station_services = services.join(start_station_service_uids, on="serviceUid", how="inner") # Get services starting from this station
+
+        departure_times = services.filter(pl.col("crs") == start_station).select(["serviceUid", "departure"]).group_by("serviceUid").agg(
+            pl.first("departure").alias("departPrevious")
+        )
+
+        station_services = station_services.join(departure_times, on="serviceUid", how="left")#.filter(pl.col("arrival") > pl.col("departPrevious")) # Add column for the depart time - here select arrival after departure?
+        if not services.filter(pl.col("crs") == start_station).is_empty():
+            times_df = station_services.with_columns((60*(pl.col("arrival").cast(pl.Int64)//100 - pl.col("departPrevious").cast(pl.Int64)//100) +
+                                                      (pl.col("arrival").cast(pl.Int64)%100 - pl.col("departPrevious").cast(pl.Int64))).alias("time"))
+            # Find the connection time
+            times_df = times_df.filter(pl.col("time") > 0) # Ensure it is positive, we could instead use the filter a few line sup
+            fastest = times_df.group_by("crs").agg(pl.min("time").alias("fastestConnectionTime"))
+            if not fastest.is_empty():
+                row = fastest.with_columns(pl.lit(start_station).alias("stationStart")).pivot(on="crs", index="stationStart", values="fastestConnectionTime", aggregate_function="first")
+                rows.append(row)
+    connection_times = pl.concat(rows, how="diagonal")
+    return connection_times
+
+def get_full_connection_times(
+        connection_time: pl.DataFrame,
+        penalty: int = 5
+
+    ) -> pl.DataFrame:
+    """
+    Fill all (possible) null values in distance matrix
+    """
+    rows = set(connection_time["stationStart"].to_list())
+    cols = set(connection_time.columns) - {"stationStart"}
+
+    common_stations = sorted(list(rows & cols))
+    connection_time = connection_time.filter(pl.col("stationStart").is_in(common_stations)).select(["stationStart"] + common_stations)
+
+    nodes = connection_time["stationStart"].to_list()
+    n = len(nodes)
+
+    # Adjacency matric
+    adj = np.array(connection_time.select(nodes).to_numpy(), dtype=float)
+    adj[np.isnan(adj)] = np.inf
+
+    # Floyd-Warshall algorithm
+    for k in range(n):
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    if adj[i, k] < np.inf and adj[k, j] < np.inf:
+                        new_dist = adj[i, k] + adj[k, j] + penalty
+                        if new_dist < adj[i, j]:
+                            adj[i, j] = new_dist
+    adj = np.where(np.isinf(adj), None, adj) # Fill with Null
+
+    dm_dict = {"stationStart": nodes}
+    for i, station in enumerate(common_stations):
+        dm_dict[station] = adj[:, i].tolist()
+
+    dm_filled = pl.DataFrame(dm_dict).with_columns([pl.col(col).cast(pl.Int64) for col in common_stations]) # Maybe use int16???
+    return dm_filled
+
+if __name__ == "__main__":
+    services = load_data("https://api.rtt.io/api/v1", USERNAME, PASSWORD, pl.read_csv("StationMap.csv"), datetime.datetime.now())
+    services.write_csv("Services.csv")
+    dm = get_full_connection_times(get_times_connections(services))
+    dm.write_csv("ConnectionTimes.csv")
