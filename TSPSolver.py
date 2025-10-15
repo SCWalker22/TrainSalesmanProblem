@@ -197,19 +197,23 @@ def organise_arrivals_df(
 
 def find_possible_next_stations(
     services: pl.DataFrame,
-    arrivals: dict[str, dict[list[str, datetime]]],
+    arrivals: pl.DataFrame,#dict[str, dict[list[str, datetime]]],
+    all_stations: list[str],
     # start_time: datetime,
-    # change_time: int = 5
 
     ) -> pl.DataFrame:
     """
 
     """
     arrivals_new: list[pl.DataFrame] = []
-    for start_station, details in arrivals.items():
-        arrivals_temp = find_timed_stations(services, start_station, pl.DataFrame({"crs": all_stations, "arrival": None, "serviceFrom": None}), details["arrival"])
+    next_stations = arrivals["crs"].unique().to_list()
+    for start_station in next_stations:
+        departure_time = arrivals.filter(pl.col("crs") == start_station)["arrival"][0]
+        depart_time = datetime(2025, 9, 1, departure_time//100, departure_time%100, 0)
+        arrivals_temp = find_timed_stations(services, start_station, pl.DataFrame({"crs": all_stations, "arrival": None, "serviceFrom": None}), depart_time)
         arrivals_new.append(arrivals_temp)
     arrivals_sorted = organise_arrivals_df(arrivals, arrivals_new)
+    print(arrivals_sorted)
     return arrivals_sorted
 
 def christofides(
@@ -268,7 +272,8 @@ def a_star_solver(
 def find_next_branch(
     services: pl.DataFrame,
     stations_remaining: list[str],
-    stations_reached: dict[str, dict[str, list[str] | datetime]],
+    stations_reached: pl.DataFrame,#dict[str, dict[str, list[str] | datetime]],
+    all_stations: list[str],
     start_station: str,
     change_time: int = 5
 
@@ -281,23 +286,26 @@ def find_next_branch(
     routes: list[tuple[list[str], datetime]] = []
     none_reachable = True
     for station in stations_remaining:
-        print(stations_reached)
-        if station in stations_reached.keys():
+        # print(stations_reached)
+        stations_reachable = stations_reached.filter(pl.col("arrival").is_not_null())["crs"].to_list()
+        if station in stations_reachable:
             # We have found a station, we would like to go here - also need to handle branching if we can go to a station
-            time_reached = stations_reached[station]["arrival"]
+            time_reached = stations_reached.filter(pl.col("crs") == station)["arrival"][0]
             hours = time_reached//100
             mins = (time_reached%60) + change_time
-            print(f"{station} here")
+            # print(f"{station} here")
             routes.append(([start_station, station], datetime(2025, 9, 1, hours, mins, 0)))
             none_reachable = False
     for station in routes:
         stations_remaining.remove(station[0][1])
     if none_reachable:
         # find new route
-        arrivals_df = find_possible_next_stations(services, arrivals)
-        print("here")
-    print(routes)
-    print(stations_remaining)
+        arrivals_df = find_possible_next_stations(services, stations_reached, all_stations)
+        # print(arrivals_df)
+        print("/n/n/n/n\n\n\n\n")
+        # print("here")
+    # print(routes)
+    # print(stations_remaining)
     return stations_remaining, routes
 
 def branching_graph(
@@ -320,14 +328,16 @@ def branching_graph(
     stations_reached: dict[str, dict[str, list[str] | int]] = {}
     stations_reachable_new = find_timed_stations(services, start_station, stations_reachable, start_time)
     stations_reached_df = stations_reachable_new.filter(pl.col("arrival").is_not_null())
-    stations_reached = {row["crs"]: {"arrival": row["arrival"], "serviceFrom": [row["serviceFrom"]]} for row in stations_reached_df.iter_rows(named=True)}
+    # stations_reached = {row["crs"]: {"arrival": row["arrival"], "serviceFrom": [row["serviceFrom"]]} for row in stations_reached_df.iter_rows(named=True)}
     # 2 Cases now, we have a possible station in our list, or we don't, and need to search for another
     stations_remaining = stations.copy()
-    arrivals = stations_reached
+    arrivals = stations_reached_df
     while len(stations_remaining) != 0:
-        stations_remaining, new_routes = find_next_branch(services, stations_remaining, arrivals, start_station, change_time)
-        print(arrivals)
         print(stations_remaining)
+        stations_remaining, new_routes = find_next_branch(services, stations_remaining, arrivals, all_stations, start_station, change_time)
+        print(new_routes)
+        # print(arrivals)
+        # print(stations_remaining)
     # none_reachable = True
     # for station in stations_remaining:
     #     print(station)
