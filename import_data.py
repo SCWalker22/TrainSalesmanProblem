@@ -4,6 +4,10 @@ from requests.auth import HTTPBasicAuth
 import datetime
 from typing import Type
 import numpy as np
+import time
+
+import aiohttp
+import asyncio
 
 USERNAME = ""
 PASSWORD = ""
@@ -54,18 +58,20 @@ def format_df(
     #         new_columns += special_columns
 
     # # new_columns = [pl.col("Location")[i].alias(key) if key not in ["origin", "destination"] else  for i, key, val in enumerate(location_detail.items())]
-    if "origin" in df.columns:
+    if "origin" in df.columns: # Should we be dropping these?
         df = df.drop("origin")
     if "destination" in df.columns:
         df = df.drop("destination")
-    df = df.unnest("locationDetail")
-    df = df.with_columns([
-        pl.col("origin").list.first().struct.rename_fields([f"origin_{key.name}" for key in df.schema["origin"].inner.fields]).alias("origin"),
-        pl.col("destination").list.first().struct.rename_fields([f"destination_{key.name}" for key in df.schema["destination"].inner.fields]).alias("destination")
-    ])
-    df = df.unnest("origin")
-    df = df.unnest("destination")
-    return df
+    if "locationDetail" in df.columns:
+        df = df.unnest("locationDetail")
+        df = df.with_columns([
+            pl.col("origin").list.first().struct.rename_fields([f"origin_{key.name}" for key in df.schema["origin"].inner.fields]).alias("origin"),
+            pl.col("destination").list.first().struct.rename_fields([f"destination_{key.name}" for key in df.schema["destination"].inner.fields]).alias("destination")
+        ])
+        df = df.unnest("origin")
+        df = df.unnest("destination")
+        return df
+    return pl.DataFrame()
 
 def make_request(
         url: str,
@@ -105,6 +111,7 @@ def load_data(
         if "services" in trains.keys():
             df = pl.DataFrame(trains["services"])
             df = df.with_columns(pl.lit(key).alias("Station"))
+            df = format_df(df)
             # print(df)
             # print(df["locationDetail"])
             # print(df.columns)
@@ -113,8 +120,73 @@ def load_data(
             print(f"Unable to find services for {key}")
 
     dfs = pl.concat(df_list)
-    dfs.write_csv("Services.csv")
+    # dfs.write_csv("Services.csv")
     return dfs
+
+
+async def fetch_data(
+        session: aiohttp.ClientSession,
+        url: str,
+        station: str,
+        auth: aiohttp.BasicAuth
+
+    ) -> pl.DataFrame:
+
+    async with session.get(url, auth=auth) as response:
+        if response.status == 200:
+            data = await response.json()
+            if "services" in data:
+                df = pl.DataFrame(data["services"]).with_columns(pl.lit(station).alias("Station"))
+                return df
+        print(f"Failed to recieve data for {station}")
+        return pl.DataFrame()
+    
+async def main(
+        urls: dict[str, str],
+        username: str,
+        password: str
+    
+    ) -> pl.DataFrame:
+    """
+    
+    """
+
+    auth = aiohttp.BasicAuth(username, password)
+
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_data(session, url, station, auth) for url, station in urls.items()]
+        results = await asyncio.gather(*tasks)
+
+    results = [format_df(df) for df in results if not df.is_empty()]
+
+    if results:
+        df_out = pl.concat(results, rechunk=True, how="diagonal")
+        if "associations" in df_out.columns:
+                df_out = df_out.drop("associations")
+        return df_out
+    return pl.DataFrame()
+
+
+def load_data_asyncio(
+    base_url: str,
+    username: str,
+    password: str,
+    mappingDF: pl.DataFrame,
+    date: datetime.datetime | str = ""
+
+    ) -> pl.DataFrame:
+    """
+    
+    """
+    stationMap = dict(zip(mappingDF["TLC"], mappingDF["Station"]))
+
+    if date != "":
+        date = f'/{date.strftime("%Y/%m/%d")}'
+
+    urls: dict[str, str] = {f"{base_url}/json/search/{key}{date}": key for key in stationMap.keys()}
+
+    df = asyncio.run(main(urls, username, password))
+    return df
 
 def stream_data(
     base_url: str,
@@ -282,7 +354,14 @@ def get_full_connection_times(
     return dm_filled
 
 if __name__ == "__main__":
-    services = load_data("https://api.rtt.io/api/v1", USERNAME, PASSWORD, pl.read_csv("StationMap.csv"), datetime.datetime.now())
+    # start_time = time.time()
+    # services = load_data("https://api.rtt.io/api/v1", USERNAME, PASSWORD, pl.read_csv("StationMap.csv"), datetime.datetime.now())
+    services = convert_cols_to_numeric(rename_cols(load_data_asyncio("https://api.rtt.io/api/v1", USERNAME, PASSWORD, pl.read_csv("StationMap.csv"), datetime.datetime.now())))
+    # end_time = time.time()
+    # print(f"loaded, took {end_time - start_time} seconds")
     services.write_csv("Services.csv")
+    # start_time_dm = time.time()
     dm = get_full_connection_times(get_times_connections(services))
+    # end_time_dm = time.time()
+    # print(f"dm took {end_time_dm - start_time_dm} seconds")
     dm.write_csv("ConnectionTimes.csv")
