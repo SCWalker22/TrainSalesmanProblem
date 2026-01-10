@@ -4,8 +4,8 @@ from datetime import datetime
 import os
 import time
 
-USERNAME = "rttapi_SCWalker22"
-PASSWORD = "c3090c9e1b0133c4f524bd082ae850f663b017c5"
+USERNAME = ""
+PASSWORD = ""
 
 def run_all(
 

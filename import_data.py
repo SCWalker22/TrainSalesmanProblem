@@ -9,8 +9,8 @@ import time
 import aiohttp
 import asyncio
 
-USERNAME = "rttapi_SCWalker22"
-PASSWORD = "c3090c9e1b0133c4f524bd082ae850f663b017c5"
+USERNAME = ""
+PASSWORD = ""
 
 # def location_detail_structure(
         

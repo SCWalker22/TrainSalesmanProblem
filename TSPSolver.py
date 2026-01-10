@@ -353,6 +353,9 @@ def branching_graph(
     for start_station in start_stations:
         possible_stations = find_next_branch(services, start_station, start_time_num)
         branches[start_station] = {"time": start_time_num, "reachable": [{crs: {"time": arrival} for crs, arrival in possible_stations.iter_rows()}]}
+        # We need to run this iteratively, checking each time if we have satisfied the route with test_branch
+        # But we also need to prune the graph, and remove any options that have already been covered quicker: 
+        # Sublists of original list (with same start and end), with the quickest time to final destination
         
 
 def simple_route_finder(
@@ -405,17 +408,17 @@ def full_graph_traversal(
     """
     Find some possible routes, and return - these may not be the quickest, but should contain the quickest
     """
-    for start_station in stations:
-        route_end_time, route = branching_graph(services, stations, start_time, start_station)
+    # for start_station in stations:
+    #     route_end_time, route = branching_graph(services, stations, start_time, start_station)
     return [[]], [0]
 
 if __name__ == "__main__":
     start_time = time.time()
-    services = convert_cols_to_numeric(rename_cols(pl.read_csv("Services.csv", infer_schema=None)))
+    services = convert_cols_to_numeric(pl.read_csv("Services.csv", infer_schema=None))
     # stations = ['MYB', 'BDS', 'CST', 'CHX', 'CTK', 'EPH', 'EUS', 'ZFD', 'FST', 'HOX', 'KGX', 'LST', 'LBG', 'MOG', 'OLD', 'PAD', 'SDC', 'STP', 'TCR', 'VXH', 'VIC', 'BFR', 'WAT', 'WAE']
-    # stations_to_travel = christofides(services, stations, dm=pl.read_csv("ConnectionTimes.csv", infer_schema=None))
-    # journey_time, route = get_full_route_timed(services, stations_to_travel)
     stations = ["EXD", "IPS", "EXC", "PLY"]
+    stations_to_travel = christofides(services, stations, dm=pl.read_csv("ConnectionTimes.csv", infer_schema=None))
+    journey_time, route = get_full_route_timed(services, stations_to_travel)
     journey_time, route = full_graph_traversal(services, stations, datetime(2025, 9, 1, 0, 0, 0))
     end_time = time.time()
     time_taken = end_time - start_time
