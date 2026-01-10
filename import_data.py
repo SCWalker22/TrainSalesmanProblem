@@ -73,55 +73,55 @@ def format_df(
         return df
     return pl.DataFrame()
 
-def make_request(
-        url: str,
-        auth: HTTPBasicAuth
+# def make_request(
+#         url: str,
+#         auth: HTTPBasicAuth
 
-    ) -> dict:
-    response = requests.get(url, auth=auth)
+#     ) -> dict:
+#     response = requests.get(url, auth=auth)
 
-    if response.ok:
-        return response.json()
-    else:
-        raise requests.HTTPError(f'Request to {url} failed ({response.status_code}, {response.reason})')
+#     if response.ok:
+#         return response.json()
+#     else:
+#         raise requests.HTTPError(f'Request to {url} failed ({response.status_code}, {response.reason})')
 
-def load_data(
-    base_url: str,
-    username: str,
-    password: str,
-    mappingDF: pl.DataFrame,
-    date: datetime.datetime | str = ""
+# def load_data(
+#     base_url: str,
+#     username: str,
+#     password: str,
+#     mappingDF: pl.DataFrame,
+#     date: datetime.datetime | str = ""
 
-    ) -> pl.DataFrame:
-    """
-    Collect data all at once, then collect and store
-    """
-    stationMap = dict(zip(mappingDF["TLC"], mappingDF["Station"]))
+#     ) -> pl.DataFrame:
+#     """
+#     Collect data all at once, then collect and store
+#     """
+#     stationMap = dict(zip(mappingDF["TLC"], mappingDF["Station"]))
 
-    if date != "":
-        date = f'/{date.strftime("%Y/%m/%d")}'
+#     if date != "":
+#         date = f'/{date.strftime("%Y/%m/%d")}'
 
-    df_list: list[pl.DataFrame] = []
+#     df_list: list[pl.DataFrame] = []
 
-    for key in stationMap.keys():
-        print(f"Loading {key}")
-        request = f"{base_url}/json/search/{key}{date}"
-        print(request)
-        trains = make_request(request, HTTPBasicAuth(username, password))
-        if "services" in trains.keys():
-            df = pl.DataFrame(trains["services"])
-            df = df.with_columns(pl.lit(key).alias("Station"))
-            df = format_df(df)
-            # print(df)
-            # print(df["locationDetail"])
-            # print(df.columns)
-            df_list.append(df)
-        else:
-            print(f"Unable to find services for {key}")
+#     for key in stationMap.keys():
+#         print(f"Loading {key}")
+#         request = f"{base_url}/json/search/{key}{date}"
+#         print(request)
+#         trains = make_request(request, HTTPBasicAuth(username, password))
+#         if "services" in trains.keys():
+#             df = pl.DataFrame(trains["services"])
+#             df = df.with_columns(pl.lit(key).alias("Station"))
+#             df = format_df(df)
+#             # print(df)
+#             # print(df["locationDetail"])
+#             # print(df.columns)
+#             df_list.append(df)
+#         else:
+#             print(f"Unable to find services for {key}")
 
-    dfs = pl.concat(df_list)
-    # dfs.write_csv("Services.csv")
-    return dfs
+#     dfs = pl.concat(df_list)
+#     # dfs.write_csv("Services.csv")
+#     return dfs
 
 
 async def fetch_data(
@@ -141,7 +141,7 @@ async def fetch_data(
         print(f"Failed to recieve data for {station}")
         return pl.DataFrame()
     
-async def main(
+async def load_stations(
         urls: dict[str, str],
         username: str,
         password: str
@@ -185,63 +185,63 @@ def load_data_asyncio(
 
     urls: dict[str, str] = {f"{base_url}/json/search/{key}{date}": key for key in stationMap.keys()}
 
-    df = asyncio.run(main(urls, username, password))
+    df = asyncio.run(load_stations(urls, username, password))
     return df
 
-def stream_data(
-    base_url: str,
-    username: str,
-    password: str,
-    mappingDF: pl.DataFrame,
-    date: datetime.datetime | str = "",
-    start_station: str = ""
+# def stream_data(
+#     base_url: str,
+#     username: str,
+#     password: str,
+#     mappingDF: pl.DataFrame,
+#     date: datetime.datetime | str = "",
+#     start_station: str = ""
 
-    ) -> pl.DataFrame:
-    """
-    Allows data to be streamed, and picked up later if an error occurs
-    Can add code to allow auto resuming on error
-    """
-    stationMap = dict(zip(mappingDF["TLC"], mappingDF["Station"]))
+#     ) -> pl.DataFrame:
+#     """
+#     Allows data to be streamed, and picked up later if an error occurs
+#     Can add code to allow auto resuming on error
+#     """
+#     stationMap = dict(zip(mappingDF["TLC"], mappingDF["Station"]))
 
-    if date != "":
-        date = f'/{date.strftime("%Y/%m/%d")}'
+#     if date != "":
+#         date = f'/{date.strftime("%Y/%m/%d")}'
 
-    # time_cols: list[str] = ["gbttBookedArrival, gbttBookedDeparture", "origin_workingTime", "origin_publicTime", "destination_workingTime", "destination_publicTime", "realtimeArrival", "realtimeDeparture"]
+#     # time_cols: list[str] = ["gbttBookedArrival, gbttBookedDeparture", "origin_workingTime", "origin_publicTime", "destination_workingTime", "destination_publicTime", "realtimeArrival", "realtimeDeparture"]
 
-    if not start_station:
-        dfs: pl.DataFrame = pl.DataFrame()
-        reached_first = True
-    else:
-        dfs = pl.read_csv("Services.csv", infer_schema_length = None)
-        dfs = dfs.with_columns([
-            pl.col(col).cast(pl.String).alias(col) for col in dfs.columns if dfs[col].dtype == pl.Int64
-        ])
-        reached_first = False
+#     if not start_station:
+#         dfs: pl.DataFrame = pl.DataFrame()
+#         reached_first = True
+#     else:
+#         dfs = pl.read_csv("Services.csv", infer_schema_length = None)
+#         dfs = dfs.with_columns([
+#             pl.col(col).cast(pl.String).alias(col) for col in dfs.columns if dfs[col].dtype == pl.Int64
+#         ])
+#         reached_first = False
 
 
-    for key in stationMap.keys():
-        if key == start_station:
-            reached_first = True
-        if reached_first:
-            print(f"Loading {key}")
-            request = f"{base_url}/json/search/{key}{date}"
-            trains = make_request(request, auth=HTTPBasicAuth(username, password))
-            if "services" in trains.keys() and trains["services"] is not None:
-                df = pl.DataFrame(trains["services"])
-                df = df.with_columns(pl.lit(key).alias("Station")) # Not needed ??? ======== crs
-                # print(f"{df},\n{df.columns},\n{df.dtypes}")
-                # print(f"{dfs},\n{dfs.columns},\n{dfs.dtypes}")
-                df = format_df(df)
-                # print(f"{df},\n{df.columns},\n{df.dtypes}")
-                if dfs.is_empty():
-                    dfs = df
-                else:
-                    dfs = pl.concat([dfs, df], how="diagonal")
-            if "associations" in dfs.columns:
-                dfs = dfs.drop("associations")
-            # print(f"{dfs},\n{dfs.dtypes},\n{dfs.columns},\n{dfs["associations"]}")
-            dfs.write_csv("Services.csv")
-    return dfs
+#     for key in stationMap.keys():
+#         if key == start_station:
+#             reached_first = True
+#         if reached_first:
+#             print(f"Loading {key}")
+#             request = f"{base_url}/json/search/{key}{date}"
+#             trains = make_request(request, auth=HTTPBasicAuth(username, password))
+#             if "services" in trains.keys() and trains["services"] is not None:
+#                 df = pl.DataFrame(trains["services"])
+#                 df = df.with_columns(pl.lit(key).alias("Station")) # Not needed ??? ======== crs
+#                 # print(f"{df},\n{df.columns},\n{df.dtypes}")
+#                 # print(f"{dfs},\n{dfs.columns},\n{dfs.dtypes}")
+#                 df = format_df(df)
+#                 # print(f"{df},\n{df.columns},\n{df.dtypes}")
+#                 if dfs.is_empty():
+#                     dfs = df
+#                 else:
+#                     dfs = pl.concat([dfs, df], how="diagonal")
+#             if "associations" in dfs.columns:
+#                 dfs = dfs.drop("associations")
+#             # print(f"{dfs},\n{dfs.dtypes},\n{dfs.columns},\n{dfs["associations"]}")
+#             dfs.write_csv("Services.csv")
+#     return dfs
 
 def rename_cols(
         df: pl.DataFrame
