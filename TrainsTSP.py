@@ -1,11 +1,11 @@
-from import_data import load_data, format_df, stream_data
+from import_data import format_df, load_data_asyncio
 import polars as pl
 from datetime import datetime
 import os
 import time
 
-username: str = ""
-password: str = ""
+USERNAME = "rttapi_SCWalker22"
+PASSWORD = "c3090c9e1b0133c4f524bd082ae850f663b017c5"
 
 def run_all(
 
@@ -16,10 +16,10 @@ def run_all(
     current_directory = os.getcwd()
     print(current_directory)
     time_start_load = time.time()
-    df = stream_data(
+    df = load_data_asyncio(
         "https://api.rtt.io/api/v1",
-        username,
-        password,
+        USERNAME,
+        PASSWORD,
         pl.read_csv(os.path.join(current_directory, "StationMap.csv")),
         date = datetime.today(),
         start_station=input("Start Station TLC: ")

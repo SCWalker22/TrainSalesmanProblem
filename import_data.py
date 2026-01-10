@@ -9,8 +9,8 @@ import time
 import aiohttp
 import asyncio
 
-USERNAME = ""
-PASSWORD = ""
+USERNAME = "rttapi_SCWalker22"
+PASSWORD = "c3090c9e1b0133c4f524bd082ae850f663b017c5"
 
 # def location_detail_structure(
         
@@ -354,14 +354,16 @@ def get_full_connection_times(
     return dm_filled
 
 if __name__ == "__main__":
-    # start_time = time.time()
+    start_time_load = time.time()
     # services = load_data("https://api.rtt.io/api/v1", USERNAME, PASSWORD, pl.read_csv("StationMap.csv"), datetime.datetime.now())
-    services = convert_cols_to_numeric(rename_cols(load_data_asyncio("https://api.rtt.io/api/v1", USERNAME, PASSWORD, pl.read_csv("StationMap.csv"), datetime.datetime.now())))
-    # end_time = time.time()
-    # print(f"loaded, took {end_time - start_time} seconds")
-    services.write_csv("Services.csv")
-    # start_time_dm = time.time()
+    date = datetime.datetime.now()
+    date_str = date.strftime("%Y-%m-%d")
+    services = convert_cols_to_numeric(rename_cols(load_data_asyncio("https://api.rtt.io/api/v1", USERNAME, PASSWORD, pl.read_csv("StationMap.csv"), date)))
+    end_time_load = time.time()
+    print(f"loaded, took {end_time_load - start_time_load} seconds")
+    services.write_csv(f"Services-{date_str}.csv")
+    start_time_dm = time.time()
     dm = get_full_connection_times(get_times_connections(services))
-    # end_time_dm = time.time()
-    # print(f"dm took {end_time_dm - start_time_dm} seconds")
-    dm.write_csv("ConnectionTimes.csv")
+    end_time_dm = time.time()
+    print(f"dm took {end_time_dm - start_time_dm} seconds")
+    dm.write_csv(f"ConnectionTimes-{date_str}.csv")
