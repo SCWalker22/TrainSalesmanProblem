@@ -33,13 +33,13 @@ for num_stations in num_stations_range:
         stations = get_n_correct_stations(stations_list, num_stations)
         print(f"{num_stations=}, {i=}, {stations=}")
 
-        # vvv Full Graph Traversal vvv
-        start_time = time.time()
-        _, route_times = full_graph_traversal(services, stations, depart_time, change_time=change_time)
-        end_time = time.time()
-        method_time_taken = end_time - start_time
-        graph_traversal[num_stations].append((method_time_taken, route_times))
-        # ^^^ Full Graph Traversal ^^^
+        # # vvv Full Graph Traversal vvv
+        # start_time = time.time()
+        # _, route_times = full_graph_traversal(services, stations, depart_time, change_time=change_time)
+        # end_time = time.time()
+        # method_time_taken = end_time - start_time
+        # graph_traversal[num_stations].append((method_time_taken, route_times))
+        # # ^^^ Full Graph Traversal ^^^
 
         # vvv Simple vvv
         start_time = time.time()
